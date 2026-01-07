@@ -3,5 +3,5 @@ djangorestframework>=3.14
 django-cors-headers>=4.0
 python-dotenv>=1.0
 pillow>=10.0
-mysqlclient>=2.2
+PyMySQL>=1.1
 gunicorn>=21.0
