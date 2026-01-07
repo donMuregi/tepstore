@@ -18,6 +18,20 @@ import {
   MagnifyingGlassIcon
 } from '@heroicons/react/24/outline';
 
+interface Employer {
+  id: number;
+  name: string;
+  code: string;
+}
+
+interface Bank {
+  id: number;
+  name: string;
+  code: string;
+  logo?: string;
+  branch?: string;
+}
+
 export default function TabletDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -36,6 +50,12 @@ export default function TabletDetailPage() {
   const [applicationType, setApplicationType] = useState<'school' | 'individual'>('school');
   const [applicationStep, setApplicationStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
+  
+  // Employer and Bank state
+  const [employers, setEmployers] = useState<Employer[]>([]);
+  const [banks, setBanks] = useState<Bank[]>([]);
+  const [employerNotListed, setEmployerNotListed] = useState(false);
+  
   const [applicationData, setApplicationData] = useState({
     // Contact info
     full_name: '',
@@ -48,6 +68,10 @@ export default function TabletDetailPage() {
     organization_name: '',
     registration_number: '',
     organization_address: '',
+    // Employer/Bank for individuals
+    employer_id: '',
+    bank_id: '',
+    employer_name: '',
     // Payment plan
     months: 12,
   });
@@ -105,14 +129,19 @@ export default function TabletDetailPage() {
   useEffect(() => {
     const fetchTabletData = async () => {
       try {
-        const [tabletsRes, softwareRes] = await Promise.all([
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+        const [tabletsRes, softwareRes, employersRes, banksRes] = await Promise.all([
           educationAPI.getTablets(),
-          educationAPI.getSoftware()
+          educationAPI.getSoftware(),
+          fetch(`${API_URL}/employers/`).then(r => r.json()),
+          fetch(`${API_URL}/banks/`).then(r => r.json()),
         ]);
         
         const foundTablet = tabletsRes.results?.find((t: EducationTablet) => t.slug === slug);
         setTablet(foundTablet || null);
         setSoftwareOptions(softwareRes || []);
+        setEmployers(employersRes);
+        setBanks(banksRes);
       } catch (error) {
         console.error('Error fetching tablet:', error);
       } finally {
@@ -614,7 +643,105 @@ export default function TabletDetailPage() {
                             <p className="mt-1 text-sm text-green-600">✓ School selected</p>
                           )}
                         </div>
+                        
+                        {/* Bank Selection for School */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Preferred Financing Bank *
+                          </label>
+                          <select
+                            value={applicationData.bank_id}
+                            onChange={(e) => setApplicationData({ ...applicationData, bank_id: e.target.value })}
+                            className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-500 bg-white text-gray-900"
+                          >
+                            <option value="">-- Select Bank --</option>
+                            {banks.map((bank) => (
+                              <option key={bank.id} value={bank.id}>{bank.name}</option>
+                            ))}
+                          </select>
+                          <p className="text-xs text-gray-500 mt-1">
+                            We&apos;ll work with this bank for your institution&apos;s financing
+                          </p>
+                        </div>
                       </>
+                    )}
+
+                    {/* Employer/Bank fields for Parent (Individual) */}
+                    {applicationType === 'individual' && (
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Select Your Employer
+                          </label>
+                          <select
+                            value={applicationData.employer_id}
+                            onChange={(e) => {
+                              setApplicationData({ ...applicationData, employer_id: e.target.value, bank_id: '' });
+                              setEmployerNotListed(false);
+                            }}
+                            disabled={employerNotListed}
+                            className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-500 bg-white text-gray-900 disabled:opacity-50"
+                          >
+                            <option value="">-- Select Employer --</option>
+                            {employers.map((emp) => (
+                              <option key={emp.id} value={emp.id}>{emp.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id="employerNotListed"
+                            checked={employerNotListed}
+                            onChange={(e) => {
+                              setEmployerNotListed(e.target.checked);
+                              if (e.target.checked) {
+                                setApplicationData({ ...applicationData, employer_id: '' });
+                              }
+                            }}
+                            className="w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
+                          />
+                          <label htmlFor="employerNotListed" className="text-sm text-gray-700">
+                            My employer is not listed
+                          </label>
+                        </div>
+
+                        {employerNotListed && (
+                          <>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Employer Name (Optional)
+                              </label>
+                              <input
+                                type="text"
+                                value={applicationData.employer_name}
+                                onChange={(e) => setApplicationData({ ...applicationData, employer_name: e.target.value })}
+                                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-500 bg-white text-gray-900"
+                                placeholder="Enter your employer name"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Select Your Bank
+                              </label>
+                              <select
+                                value={applicationData.bank_id}
+                                onChange={(e) => setApplicationData({ ...applicationData, bank_id: e.target.value })}
+                                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-500 bg-white text-gray-900"
+                              >
+                                <option value="">-- Select Bank --</option>
+                                {banks.map((bank) => (
+                                  <option key={bank.id} value={bank.id}>{bank.name}</option>
+                                ))}
+                              </select>
+                              <p className="text-xs text-gray-500 mt-1">
+                                We&apos;ll work with this bank for your credit check
+                              </p>
+                            </div>
+                          </>
+                        )}
+                      </div>
                     )}
                   </div>
 

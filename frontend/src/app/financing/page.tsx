@@ -49,32 +49,32 @@ export default function MSMEPage() {
   return (
     <div className="bg-gray-50 min-h-screen">
       {/* Hero Section */}
-      <section className="bg-gradient-to-br from-emerald-500 to-teal-500 text-white py-16">
+      <section className="bg-gradient-to-br from-red-600 to-red-500 text-white py-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="max-w-4xl">
             <h1 className="text-4xl md:text-5xl font-bold mb-4">
               MSMEs Device Financing
             </h1>
-            <p className="text-xl text-emerald-50 mb-6">
+            <p className="text-xl text-red-50 mb-6">
               Get your dream smartphone today and pay in convenient monthly installments. 
               Quick approval with just your ID and KRA PIN, or enjoy lower rates with salary deduction.
             </p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="bg-white/20 backdrop-blur-sm px-4 py-3 rounded-xl">
                 <div className="text-2xl font-bold mb-1">Same Day</div>
-                <div className="text-xs text-emerald-50">Approval</div>
+                <div className="text-xs text-red-50">Approval</div>
               </div>
               <div className="bg-white/20 backdrop-blur-sm px-4 py-3 rounded-xl">
                 <div className="text-2xl font-bold mb-1">No Payslip</div>
-                <div className="text-xs text-emerald-50">Required</div>
+                <div className="text-xs text-red-50">Required</div>
               </div>
               <div className="bg-white/20 backdrop-blur-sm px-4 py-3 rounded-xl">
                 <div className="text-2xl font-bold mb-1">Flexible</div>
-                <div className="text-xs text-emerald-50">Payment Terms</div>
+                <div className="text-xs text-red-50">Payment Terms</div>
               </div>
               <div className="bg-white/20 backdrop-blur-sm px-4 py-3 rounded-xl">
                 <div className="text-2xl font-bold mb-1">Higher Limits</div>
-                <div className="text-xs text-emerald-50">For Salaried</div>
+                <div className="text-xs text-red-50">For Salaried</div>
               </div>
             </div>
           </div>

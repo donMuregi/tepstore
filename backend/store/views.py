@@ -1,7 +1,8 @@
+import logging
 from rest_framework import viewsets, filters, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticated, AllowAny, BasePermission
 from rest_framework.authentication import TokenAuthentication, SessionAuthentication
 from rest_framework.views import APIView
 from django.db.models import Sum
@@ -29,6 +30,37 @@ from .serializers import (
     OrderSerializer, OrderCreateSerializer, HeroSlideSerializer,
     TradeInRequestSerializer, TradeInRequestCreateSerializer, EmployerSerializer, BankSerializer, SchoolSerializer, PolicySerializer
 )
+from .utils import SensitiveOperationThrottle, InputValidator, get_client_ip
+
+logger = logging.getLogger(__name__)
+security_logger = logging.getLogger('django.security')
+
+
+# ============ CUSTOM PERMISSIONS ============
+
+class IsAdminOrStaff(BasePermission):
+    """
+    Permission check for admin or staff users only.
+    Use this for internal/admin endpoints.
+    """
+    def has_permission(self, request, view):
+        return request.user and request.user.is_authenticated and (
+            request.user.is_staff or request.user.is_superuser
+        )
+
+
+class IsOwnerOrAdmin(BasePermission):
+    """
+    Object-level permission to only allow owners or admins.
+    """
+    def has_object_permission(self, request, view, obj):
+        # Admin can access anything
+        if request.user.is_staff or request.user.is_superuser:
+            return True
+        # Check if obj has a user field
+        if hasattr(obj, 'user'):
+            return obj.user == request.user
+        return False
 
 
 # ============ POLICY VIEW ============
@@ -178,7 +210,8 @@ class FinancingPlanListView(generics.ListAPIView):
 class FinancingApplicationViewSet(viewsets.ModelViewSet):
     """Handle financing applications"""
     queryset = FinancingApplication.objects.all()
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]  # Require authentication
+    throttle_classes = [SensitiveOperationThrottle]
     lookup_field = 'application_id'
     
     def get_serializer_class(self):
@@ -187,18 +220,36 @@ class FinancingApplicationViewSet(viewsets.ModelViewSet):
         return FinancingApplicationSerializer
     
     def get_queryset(self):
-        if self.request.user.is_authenticated:
-            return FinancingApplication.objects.filter(user=self.request.user)
-        return FinancingApplication.objects.none()
+        """Users can only see their own applications, admins see all"""
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return FinancingApplication.objects.all()
+        return FinancingApplication.objects.filter(user=self.request.user)
+    
+    def get_permissions(self):
+        """Override permissions for specific actions"""
+        if self.action in ['submit_to_bank']:
+            # Only admin/staff can submit to bank
+            return [IsAdminOrStaff()]
+        if self.action in ['destroy', 'update', 'partial_update']:
+            # Only owner or admin can modify
+            return [IsOwnerOrAdmin()]
+        return super().get_permissions()
     
     def perform_create(self, serializer):
-        user = self.request.user if self.request.user.is_authenticated else None
+        user = self.request.user
+        security_logger.info(
+            f"Financing application created by user {user.id} from IP {get_client_ip(self.request)}"
+        )
         serializer.save(user=user)
     
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminOrStaff])
     def submit_to_bank(self, request, application_id=None):
-        """Submit application to bank API for approval"""
+        """Submit application to bank API for approval (Admin only)"""
         application = self.get_object()
+        
+        security_logger.info(
+            f"Admin {request.user.id} submitting application {application_id} to bank"
+        )
         
         # TODO: Integrate with actual bank API
         # For now, simulate bank response
@@ -208,21 +259,45 @@ class FinancingApplicationViewSet(viewsets.ModelViewSet):
         application.bank_response = {'status': 'approved', 'message': 'Loan approved'}
         application.save()
         
-        return Response(FinancingApplicationSerializer(application).data)
+        return Response({
+            'success': True,
+            'data': FinancingApplicationSerializer(application).data
+        })
     
     @action(detail=True, methods=['post'])
     def confirm(self, request, application_id=None):
         """Customer confirms the financing application"""
         application = self.get_object()
+        
+        # Ensure user owns this application or is admin
+        if not (request.user.is_staff or application.user == request.user):
+            security_logger.warning(
+                f"Unauthorized confirmation attempt by user {request.user.id} for application {application_id}"
+            )
+            return Response({
+                'success': False,
+                'error': {'code': 'FORBIDDEN', 'message': 'You do not have permission to confirm this application'}
+            }, status=status.HTTP_403_FORBIDDEN)
+        
         if application.status != 'approved':
-            return Response({'error': 'Application must be approved first'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                'success': False,
+                'error': {'code': 'INVALID_STATUS', 'message': 'Application must be approved first'}
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         application.status = 'confirmed'
         application.save()
         
+        security_logger.info(
+            f"Application {application_id} confirmed by user {request.user.id}"
+        )
+        
         # TODO: Send confirmation to bank API to deposit to escrow
         
-        return Response(FinancingApplicationSerializer(application).data)
+        return Response({
+            'success': True,
+            'data': FinancingApplicationSerializer(application).data
+        })
 
 
 # ============ ENTERPRISE VIEWS ============
@@ -237,6 +312,8 @@ class EnterpriseBundleViewSet(viewsets.ReadOnlyModelViewSet):
 class EnterpriseOrderViewSet(viewsets.ModelViewSet):
     """Handle enterprise orders"""
     queryset = EnterpriseOrder.objects.all()
+    permission_classes = [IsAuthenticated]  # Require authentication
+    throttle_classes = [SensitiveOperationThrottle]
     lookup_field = 'order_id'
     
     def get_serializer_class(self):
@@ -245,18 +322,36 @@ class EnterpriseOrderViewSet(viewsets.ModelViewSet):
         return EnterpriseOrderSerializer
     
     def get_queryset(self):
-        if self.request.user.is_authenticated:
-            return EnterpriseOrder.objects.filter(user=self.request.user)
-        return EnterpriseOrder.objects.none()
+        """Users can only see their own orders, admins see all"""
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return EnterpriseOrder.objects.all()
+        return EnterpriseOrder.objects.filter(user=self.request.user)
+    
+    def get_permissions(self):
+        """Override permissions for specific actions"""
+        if self.action in ['credit_check']:
+            # Only admin/staff can trigger credit check
+            return [IsAdminOrStaff()]
+        if self.action in ['destroy', 'update', 'partial_update']:
+            # Only owner or admin can modify
+            return [IsOwnerOrAdmin()]
+        return super().get_permissions()
     
     def perform_create(self, serializer):
-        user = self.request.user if self.request.user.is_authenticated else None
+        user = self.request.user
+        security_logger.info(
+            f"Enterprise order created by user {user.id} from IP {get_client_ip(self.request)}"
+        )
         serializer.save(user=user)
     
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminOrStaff])
     def credit_check(self, request, order_id=None):
-        """Submit to bank for credit check"""
+        """Submit to bank for credit check (Admin only)"""
         order = self.get_object()
+        
+        security_logger.info(
+            f"Admin {request.user.id} initiating credit check for order {order_id}"
+        )
         
         # TODO: Integrate with Equity bank API
         # Simulate credit check response
@@ -265,7 +360,10 @@ class EnterpriseOrderViewSet(viewsets.ModelViewSet):
         order.bank_response = {'status': 'approved', 'amount': str(order.total_amount)}
         order.save()
         
-        return Response(EnterpriseOrderSerializer(order).data)
+        return Response({
+            'success': True,
+            'data': EnterpriseOrderSerializer(order).data
+        })
     
     @action(detail=True, methods=['post'])
     def adjust_order(self, request, order_id=None):
@@ -527,6 +625,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all()
     lookup_field = 'order_id'
     authentication_classes = [TokenAuthentication]
+    throttle_classes = [SensitiveOperationThrottle]
     
     def get_serializer_class(self):
         if self.action == 'create':
@@ -536,9 +635,14 @@ class OrderViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == 'create':
             return [AllowAny()]
+        if self.action in ['destroy', 'update', 'partial_update']:
+            return [IsOwnerOrAdmin()]
         return [IsAuthenticated()]
     
     def get_queryset(self):
+        """Users can only see their own orders, admins see all"""
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return Order.objects.all()
         if self.request.user.is_authenticated:
             return Order.objects.filter(user=self.request.user)
         return Order.objects.none()
@@ -547,44 +651,58 @@ class OrderViewSet(viewsets.ModelViewSet):
         """Create order from cart"""
         serializer = OrderCreateSerializer(data=request.data)
         
-        if serializer.is_valid():
-            # Get cart
-            if request.user.is_authenticated:
-                cart = Cart.objects.filter(user=request.user).first()
-            else:
-                session_key = request.session.session_key
-                cart = Cart.objects.filter(session_key=session_key, user=None).first()
-            
-            if not cart or cart.items.count() == 0:
-                return Response({'error': 'Cart is empty'}, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Create order
-            user = request.user if request.user.is_authenticated else None
-            order = serializer.save(
-                user=user,
-                subtotal=cart.total,
-                total=cart.total  # TODO: Add shipping calculation
+        if not serializer.is_valid():
+            return Response({
+                'success': False,
+                'error': {'code': 'VALIDATION_ERROR', 'details': serializer.errors}
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get cart
+        if request.user.is_authenticated:
+            cart = Cart.objects.filter(user=request.user).first()
+        else:
+            session_key = request.session.session_key
+            cart = Cart.objects.filter(session_key=session_key, user=None).first()
+        
+        if not cart or cart.items.count() == 0:
+            return Response({
+                'success': False,
+                'error': {'code': 'EMPTY_CART', 'message': 'Cart is empty'}
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Create order
+        user = request.user if request.user.is_authenticated else None
+        order = serializer.save(
+            user=user,
+            subtotal=cart.total,
+            total=cart.total  # TODO: Add shipping calculation
+        )
+        
+        # Create order items
+        for cart_item in cart.items.all():
+            OrderItem.objects.create(
+                order=order,
+                product=cart_item.product,
+                variant=cart_item.variant,
+                education_tablet=cart_item.education_tablet,
+                quantity=cart_item.quantity,
+                unit_price=cart_item.unit_price
             )
-            
-            # Create order items
-            for cart_item in cart.items.all():
-                OrderItem.objects.create(
-                    order=order,
-                    product=cart_item.product,
-                    variant=cart_item.variant,
-                    education_tablet=cart_item.education_tablet,
-                    quantity=cart_item.quantity,
-                    unit_price=cart_item.unit_price
-                )
-            
-            # Clear cart
-            cart.items.all().delete()
-            
-            # TODO: Send confirmation emails
-            # TODO: Integrate with DHL API
-            
-            return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Clear cart
+        cart.items.all().delete()
+        
+        security_logger.info(
+            f"Order {order.order_id} created by user {user.id if user else 'anonymous'} from IP {get_client_ip(request)}"
+        )
+        
+        # TODO: Send confirmation emails
+        # TODO: Integrate with DHL API
+        
+        return Response({
+            'success': True,
+            'data': OrderSerializer(order).data
+        }, status=status.HTTP_201_CREATED)
 
 
 # ============ TRADE-IN REQUESTS ============
@@ -592,45 +710,70 @@ class OrderViewSet(viewsets.ModelViewSet):
 class TradeInRequestView(APIView):
     """Handle trade-in requests"""
     permission_classes = [AllowAny]
+    throttle_classes = [SensitiveOperationThrottle]  # Rate limit form submissions
     
     def post(self, request):
         serializer = TradeInRequestCreateSerializer(data=request.data)
-        if serializer.is_valid():
-            data = serializer.validated_data
-            
-            # Get product and variant if provided
-            product = None
-            variant = None
-            if data.get('product_id'):
-                try:
-                    product = Product.objects.get(id=data['product_id'])
-                except Product.DoesNotExist:
-                    pass
-            
-            if data.get('variant_id'):
-                try:
-                    variant = ProductVariant.objects.get(id=data['variant_id'])
-                except ProductVariant.DoesNotExist:
-                    pass
-            
-            # Create trade-in request
-            trade_in = TradeInRequest.objects.create(
-                name=data['name'],
-                email=data['email'],
-                phone=data['phone'],
-                current_device=data['currentDevice'],
-                device_condition=data['deviceCondition'],
-                message=data.get('message', ''),
-                product=product,
-                product_name=data.get('product_name', ''),
-                variant=variant,
-                variant_name=data.get('variant_name', '')
-            )
-            
-            # Send email to user
+        
+        if not serializer.is_valid():
+            return Response({
+                'success': False,
+                'error': {'code': 'VALIDATION_ERROR', 'details': serializer.errors}
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        data = serializer.validated_data
+        
+        # Validate inputs for potential injection
+        text_fields = ['name', 'currentDevice', 'message']
+        for field in text_fields:
+            if field in data and data[field]:
+                is_valid, error = InputValidator.validate_text_input(data[field])
+                if not is_valid:
+                    security_logger.warning(
+                        f"Suspicious input in trade-in {field} from IP {get_client_ip(request)}: {error}"
+                    )
+                    return Response({
+                        'success': False,
+                        'error': {'code': 'INVALID_INPUT', 'message': error}
+                    }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get product and variant if provided
+        product = None
+        variant = None
+        if data.get('product_id'):
             try:
-                user_email_subject = 'Trade-In Request Received - TepStore'
-                user_email_body = f"""
+                product = Product.objects.get(id=data['product_id'])
+            except Product.DoesNotExist:
+                pass
+        
+        if data.get('variant_id'):
+            try:
+                variant = ProductVariant.objects.get(id=data['variant_id'])
+            except ProductVariant.DoesNotExist:
+                pass
+        
+        # Create trade-in request
+        trade_in = TradeInRequest.objects.create(
+            name=InputValidator.sanitize_html(data['name']),
+            email=data['email'],
+            phone=data['phone'],
+            current_device=InputValidator.sanitize_html(data['currentDevice']),
+            device_condition=data['deviceCondition'],
+            message=InputValidator.sanitize_html(data.get('message', '')),
+            product=product,
+            product_name=InputValidator.sanitize_html(data.get('product_name', '')),
+            variant=variant,
+            variant_name=InputValidator.sanitize_html(data.get('variant_name', ''))
+        )
+        
+        logger.info(
+            f"Trade-in request {trade_in.id} created from IP {get_client_ip(request)}"
+        )
+        
+        # Send email to user
+        try:
+            user_email_subject = 'Trade-In Request Received - TepStore'
+            user_email_body = f"""
 Dear {trade_in.name},
 
 Thank you for your trade-in request!
@@ -648,20 +791,20 @@ Our team will review your request and contact you within 24-48 hours with an est
 Best regards,
 The TepStore Team
 """
-                send_mail(
-                    user_email_subject,
-                    user_email_body,
-                    settings.DEFAULT_FROM_EMAIL,
-                    [trade_in.email],
-                    fail_silently=True
-                )
-            except Exception as e:
-                print(f"Error sending user email: {e}")
-            
-            # Send email to admin
-            try:
-                admin_email_subject = f'New Trade-In Request - {trade_in.name}'
-                admin_email_body = f"""
+            send_mail(
+                user_email_subject,
+                user_email_body,
+                settings.DEFAULT_FROM_EMAIL,
+                [trade_in.email],
+                fail_silently=True
+            )
+        except Exception as e:
+            logger.error(f"Error sending user email: {e}")
+        
+        # Send email to admin
+        try:
+            admin_email_subject = f'New Trade-In Request - {trade_in.name}'
+            admin_email_body = f"""
 New Trade-In Request Received!
 
 Customer Details:
@@ -683,20 +826,18 @@ Additional Message:
 ---
 View in admin: /admin/store/tradeinrequest/{trade_in.id}/change/
 """
-                admin_email = getattr(settings, 'ADMIN_EMAIL', 'admin@tepstore.com')
-                send_mail(
-                    admin_email_subject,
-                    admin_email_body,
-                    settings.DEFAULT_FROM_EMAIL,
-                    [admin_email],
-                    fail_silently=True
-                )
-            except Exception as e:
-                print(f"Error sending admin email: {e}")
-            
-            return Response(
-                TradeInRequestSerializer(trade_in).data,
-                status=status.HTTP_201_CREATED
+            admin_email = getattr(settings, 'ADMIN_EMAIL', 'admin@tepstore.com')
+            send_mail(
+                admin_email_subject,
+                admin_email_body,
+                settings.DEFAULT_FROM_EMAIL,
+                [admin_email],
+                fail_silently=True
             )
+        except Exception as e:
+            logger.error(f"Error sending admin email: {e}")
         
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return Response({
+            'success': True,
+            'data': TradeInRequestSerializer(trade_in).data
+        }, status=status.HTTP_201_CREATED)
