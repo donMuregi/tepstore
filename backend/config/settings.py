@@ -9,7 +9,9 @@ import os
 load_dotenv()
 
 # PyMySQL as MySQL driver (no compilation required)
+# Must set version_info before install_as_MySQLdb for Django compatibility
 import pymysql
+pymysql.version_info = (2, 2, 4, "final", 0)
 pymysql.install_as_MySQLdb()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
