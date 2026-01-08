@@ -6,7 +6,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 import os
 
-load_dotenv()
+# Load .env file and override any existing environment variables
+load_dotenv(override=True)
 
 # PyMySQL as MySQL driver (no compilation required)
 # Must set version_info before install_as_MySQLdb for Django compatibility
