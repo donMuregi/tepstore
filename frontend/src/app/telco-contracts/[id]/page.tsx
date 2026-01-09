@@ -87,9 +87,12 @@ export default function TelcoBundlePage({ params }: Props) {
         if (slot.id === slotId) {
           // Reset bundle when network changes
           if (field === 'network') {
-            return { ...slot, [field]: value, bundle: null };
+            return { ...slot, network: value as string | null, bundle: null };
           }
-          return { ...slot, [field]: value };
+          if (field === 'isCollapsed') {
+            return { ...slot, isCollapsed: value as boolean };
+          }
+          return { ...slot, [field]: value as string | null };
         }
         return slot;
       })

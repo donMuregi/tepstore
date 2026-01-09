@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   /* config options here */
   reactCompiler: true,
+  output: 'standalone',
   images: {
     remotePatterns: [
       {
@@ -19,11 +20,16 @@ const nextConfig: NextConfig = {
       },
       {
         protocol: 'https',
+        hostname: 'api.tepstore.africa',
+        pathname: '/media/**',
+      },
+      {
+        protocol: 'https',
         hostname: '**',
       },
     ],
     dangerouslyAllowSVG: true,
-    unoptimized: process.env.NODE_ENV === 'development',
+    unoptimized: true,
   },
 };
 

@@ -18,6 +18,10 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "TepStore - Device Financing & Enterprise Solutions",
   description: "Your trusted partner for mobile device financing, enterprise solutions, and educational technology in Kenya.",
+  icons: {
+    icon: '/tepstore-logo.png',
+    apple: '/tepstore-logo.png',
+  },
 };
 
 export default function RootLayout({

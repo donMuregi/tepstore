@@ -67,6 +67,7 @@ export interface Product {
   slug: string;
   brand: Brand | null;
   description: string;
+  short_description?: string;
   specifications: string;
   price: string;
   original_price?: string;

@@ -162,7 +162,7 @@ export default function BNPLProductPage({ params }: Props) {
                 BNPL Available
               </span>
               <h1 className="text-3xl font-bold text-gray-900 mb-2">{product.name}</h1>
-              <p className="text-gray-600">{product.short_description}</p>
+              <p className="text-gray-600">{product.short_description || product.description?.substring(0, 150) + '...'}</p>
             </div>
 
             {/* Variant Selection */}

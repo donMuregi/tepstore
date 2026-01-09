@@ -80,7 +80,7 @@ export default function ShopProductPage({ params }: { params: Promise<{ slug: st
     setAddingToCart(true);
     try {
       const token = localStorage.getItem('token');
-      await cartAPI.addItem(product.id, selectedVariant?.id || null, quantity, token || undefined);
+      await cartAPI.addItem(product.id, selectedVariant?.id ?? undefined, quantity, token || undefined);
       await refreshCart();
       setAddedToCart(true);
       setTimeout(() => setAddedToCart(false), 3000);
