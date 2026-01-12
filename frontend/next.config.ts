@@ -4,6 +4,13 @@ const nextConfig: NextConfig = {
   /* config options here */
   reactCompiler: true,
   output: 'standalone',
+  
+  // OPTIMIZATION: Limit workers on shared hosting to prevent process spawning
+  experimental: {
+    cpus: 1, // Limit to 1 CPU on shared hosting
+    workerThreads: false, // Disable worker threads
+  },
+  
   images: {
     remotePatterns: [
       {

@@ -156,6 +156,11 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        
+        # OPTIMIZATION: Use select_related for foreign keys and prefetch_related for many-to-many/reverse relations
+        # This reduces database queries from N+1 to just 2-3 queries
+        queryset = queryset.select_related('brand', 'category').prefetch_related('variants', 'images', 'reviews')
+        
         category = self.request.query_params.get('category')
         product_type = self.request.query_params.get('type')
         brand = self.request.query_params.get('brand')
@@ -221,9 +226,14 @@ class FinancingApplicationViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Users can only see their own applications, admins see all"""
+        # OPTIMIZATION: Prefetch related product and variant data
+        queryset = FinancingApplication.objects.select_related(
+            'user', 'product', 'variant', 'financing_plan', 'bank'
+        )
+        
         if self.request.user.is_staff or self.request.user.is_superuser:
-            return FinancingApplication.objects.all()
-        return FinancingApplication.objects.filter(user=self.request.user)
+            return queryset
+        return queryset.filter(user=self.request.user)
     
     def get_permissions(self):
         """Override permissions for specific actions"""
@@ -323,9 +333,12 @@ class EnterpriseOrderViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Users can only see their own orders, admins see all"""
+        # OPTIMIZATION: Prefetch bundle and employer data
+        queryset = EnterpriseOrder.objects.select_related('user', 'bundle', 'employer')
+        
         if self.request.user.is_staff or self.request.user.is_superuser:
-            return EnterpriseOrder.objects.all()
-        return EnterpriseOrder.objects.filter(user=self.request.user)
+            return queryset
+        return queryset.filter(user=self.request.user)
     
     def get_permissions(self):
         """Override permissions for specific actions"""
@@ -420,7 +433,10 @@ class FundraiserViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated()]
     
     def get_queryset(self):
-        queryset = Fundraiser.objects.filter(status='active')
+        # OPTIMIZATION: Prefetch related data for fundraisers
+        queryset = Fundraiser.objects.select_related('school', 'creator').prefetch_related('donations')
+        
+        queryset = queryset.filter(status='active')
         if self.action == 'list' and self.request.user.is_authenticated:
             # Show user's own fundraisers
             my_fundraisers = self.request.query_params.get('my_fundraisers')
@@ -499,13 +515,23 @@ class CartView(APIView):
     
     def get_cart(self, request):
         if request.user.is_authenticated:
-            cart, _ = Cart.objects.get_or_create(user=request.user)
+            cart, _ = Cart.objects.select_related('user').prefetch_related(
+                'items__product__brand',
+                'items__product__category',
+                'items__variant',
+                'items__education_tablet'
+            ).get_or_create(user=request.user)
         else:
             session_key = request.session.session_key
             if not session_key:
                 request.session.create()
                 session_key = request.session.session_key
-            cart, _ = Cart.objects.get_or_create(session_key=session_key, user=None)
+            cart, _ = Cart.objects.prefetch_related(
+                'items__product__brand',
+                'items__product__category',
+                'items__variant',
+                'items__education_tablet'
+            ).get_or_create(session_key=session_key, user=None)
         return cart
     
     def get(self, request):
@@ -583,10 +609,20 @@ class CartItemView(APIView):
     
     def get_cart(self, request):
         if request.user.is_authenticated:
-            cart, _ = Cart.objects.get_or_create(user=request.user)
+            cart, _ = Cart.objects.select_related('user').prefetch_related(
+                'items__product__brand',
+                'items__product__category',
+                'items__variant',
+                'items__education_tablet'
+            ).get_or_create(user=request.user)
         else:
             session_key = request.session.session_key
-            cart = Cart.objects.filter(session_key=session_key, user=None).first()
+            cart = Cart.objects.prefetch_related(
+                'items__product__brand',
+                'items__product__category',
+                'items__variant',
+                'items__education_tablet'
+            ).filter(session_key=session_key, user=None).first()
         return cart
     
     def patch(self, request, item_id):
@@ -641,10 +677,17 @@ class OrderViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Users can only see their own orders, admins see all"""
+        # OPTIMIZATION: Prefetch order items with related products to avoid N+1 queries
+        queryset = Order.objects.prefetch_related(
+            'items__product__brand',
+            'items__variant',
+            'items__education_tablet'
+        ).select_related('user')
+        
         if self.request.user.is_staff or self.request.user.is_superuser:
-            return Order.objects.all()
+            return queryset
         if self.request.user.is_authenticated:
-            return Order.objects.filter(user=self.request.user)
+            return queryset.filter(user=self.request.user)
         return Order.objects.none()
     
     def create(self, request):
